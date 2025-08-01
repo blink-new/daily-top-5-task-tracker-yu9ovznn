@@ -65,6 +65,7 @@ interface UserSettings {
   dailyTaskLimit: number
   showOnboarding: boolean
   notifications: boolean
+  resetTime: string
 }
 
 function App() {
@@ -84,7 +85,8 @@ function App() {
     darkMode: false,
     dailyTaskLimit: 5,
     showOnboarding: true,
-    notifications: true
+    notifications: true,
+    resetTime: '00:00'
   })
 
   // Auth state management
@@ -113,7 +115,8 @@ function App() {
           darkMode: Number(userSettingsRecord.dark_mode) > 0,
           dailyTaskLimit: userSettingsRecord.daily_goal || 5,
           showOnboarding: false, // If record exists, onboarding was completed
-          notifications: Number(userSettingsRecord.sound_enabled) > 0
+          notifications: Number(userSettingsRecord.sound_enabled) > 0,
+          resetTime: userSettingsRecord.reset_time || '00:00'
         }))
       } else {
         // First time user - show onboarding and create default settings
@@ -143,7 +146,8 @@ function App() {
         darkMode: false,
         dailyTaskLimit: 5,
         showOnboarding: false,
-        notifications: true
+        notifications: true,
+        resetTime: '00:00'
       }))
     }
   }, [user?.id])
@@ -167,6 +171,9 @@ function App() {
           break
         case 'notifications':
           updateData.sound_enabled = value ? 1 : 0
+          break
+        case 'resetTime':
+          updateData.reset_time = value
           break
         case 'showOnboarding':
           // This doesn't need to be saved to DB - it's implicit
@@ -985,6 +992,31 @@ function App() {
                     checked={settings.notifications}
                     onCheckedChange={(checked) => saveSetting('notifications', checked)}
                   />
+                </div>
+
+                {/* Task Reset Time */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Clock className="h-4 w-4" />
+                        <span className="font-medium">Daily Reset Time</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        When should your tasks reset each day?
+                      </p>
+                    </div>
+                    <Badge variant="secondary">{settings.resetTime}</Badge>
+                  </div>
+                  <Input
+                    type="time"
+                    value={settings.resetTime}
+                    onChange={(e) => saveSetting('resetTime', e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Tasks will automatically reset at this time each day. Set to 00:00 for midnight reset.
+                  </p>
                 </div>
 
                 {/* Reset Onboarding */}
