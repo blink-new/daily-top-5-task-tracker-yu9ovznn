@@ -74,13 +74,15 @@ function App() {
         date: new Date().toISOString().split('T')[0]
       }
       
-      await blink.db.tasks.create(newTask)
-      setTasks([...tasks, newTask])
+      const createdTask = await blink.db.tasks.create(newTask)
+      
+      // Reload tasks to get the latest data
+      await loadTasks()
       setNewTaskTitle('')
       toast.success('Task added! 🎯')
     } catch (error) {
       console.error('Error adding task:', error)
-      toast.error('Failed to add task')
+      toast.error('Failed to add task: ' + error.message)
     }
   }
 
@@ -95,14 +97,15 @@ function App() {
         completed: isCompleting
       })
       
-      setTasks(tasks.map(t => t.id === taskId ? { ...t, completed: isCompleting } : t))
+      // Reload tasks to get the latest data
+      await loadTasks()
       
       if (isCompleting) {
         toast.success('Task completed! 🎉')
       }
     } catch (error) {
       console.error('Error toggling task:', error)
-      toast.error('Failed to update task')
+      toast.error('Failed to update task: ' + error.message)
     }
   }
 
@@ -144,7 +147,7 @@ function App() {
     )
   }
 
-  const completedCount = tasks.filter(task => task.completed).length
+  const completedCount = tasks.filter(task => Number(task.completed) > 0).length
   const progressPercentage = tasks.length > 0 ? (completedCount / tasks.length) * 100 : 0
 
   return (
@@ -168,6 +171,8 @@ function App() {
             })}
           </p>
         </div>
+
+
 
         {/* Progress */}
         <Card className="mb-6">
@@ -233,14 +238,14 @@ function App() {
                   >
                     <CheckCircle2 
                       className={`h-5 w-5 ${
-                        task.completed 
+                        Number(task.completed) > 0
                           ? 'text-green-500 fill-green-500' 
                           : 'text-muted-foreground hover:text-green-500'
                       }`} 
                     />
                   </button>
                   <p className={`flex-1 ${
-                    task.completed 
+                    Number(task.completed) > 0
                       ? 'line-through text-muted-foreground' 
                       : 'text-foreground'
                   }`}>
