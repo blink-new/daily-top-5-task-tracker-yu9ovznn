@@ -5,8 +5,39 @@ import { Button } from './components/ui/button'
 import { Input } from './components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs'
 import { Calendar } from './components/ui/calendar'
-import { Sparkles, Plus, CheckCircle2, Calendar as CalendarIcon, Target, ArrowUp, ArrowDown } from 'lucide-react'
+import { Switch } from './components/ui/switch'
+import { Slider } from './components/ui/slider'
+import { Badge } from './components/ui/badge'
+import { Progress } from './components/ui/progress'
+import { 
+  Sparkles, 
+  Plus, 
+  CheckCircle2, 
+  Calendar as CalendarIcon, 
+  Target, 
+  ArrowUp, 
+  ArrowDown,
+  Brain,
+  BarChart3,
+  Settings,
+  Trophy,
+  Share2,
+  Moon,
+  Sun,
+  Users,
+  TrendingUp,
+  Clock,
+  Flame,
+  Star
+} from 'lucide-react'
 import { toast } from 'react-hot-toast'
+import { motion, AnimatePresence } from 'framer-motion'
+
+// Import components
+import OnboardingWizard from './components/OnboardingWizard'
+import AIInsights from './components/AIInsights'
+import Gamification from './components/Gamification'
+import Sharing from './components/Sharing'
 
 interface Task {
   id: string
@@ -15,16 +46,46 @@ interface Task {
   completed: boolean
   date: string
   user_id: string
+  category?: string
+  estimated_minutes?: number
+  actual_minutes?: number
+  energy_level?: string
+}
+
+interface AdditionalTask {
+  id: string
+  title: string
+  completed: boolean
+  date: string
+  user_id: string
+}
+
+interface UserSettings {
+  darkMode: boolean
+  dailyTaskLimit: number
+  showOnboarding: boolean
+  notifications: boolean
 }
 
 function App() {
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [tasks, setTasks] = useState<Task[]>([])
+  const [additionalTasks, setAdditionalTasks] = useState<AdditionalTask[]>([])
   const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [newAdditionalTaskTitle, setNewAdditionalTaskTitle] = useState('')
   const [isCreatingTask, setIsCreatingTask] = useState(false)
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
   const [activeTab, setActiveTab] = useState('tasks')
+  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [currentStreak, setCurrentStreak] = useState(0)
+  const [completedTasksHistory, setCompletedTasksHistory] = useState<Task[]>([])
+  const [settings, setSettings] = useState<UserSettings>({
+    darkMode: false,
+    dailyTaskLimit: 5,
+    showOnboarding: true,
+    notifications: true
+  })
 
   // Auth state management
   useEffect(() => {
@@ -34,6 +95,57 @@ function App() {
     })
     return unsubscribe
   }, [])
+
+  // Load user settings
+  const loadUserSettings = useCallback(async () => {
+    if (!user?.id) return
+    
+    try {
+      const settingsData = await blink.db.userSettings.list({
+        where: { user_id: user.id }
+      })
+      
+      if (settingsData && settingsData.length > 0) {
+        const userSettings = settingsData.reduce((acc, setting) => {
+          acc[setting.setting_key] = setting.setting_value === 'true' ? true : 
+                                   setting.setting_value === 'false' ? false :
+                                   isNaN(Number(setting.setting_value)) ? setting.setting_value : Number(setting.setting_value)
+          return acc
+        }, {} as any)
+        
+        setSettings(prev => ({ ...prev, ...userSettings }))
+        
+        // Check if should show onboarding
+        if (userSettings.showOnboarding !== false) {
+          setShowOnboarding(true)
+        }
+      } else {
+        // First time user - show onboarding
+        setShowOnboarding(true)
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error)
+    }
+  }, [user?.id])
+
+  // Save user setting
+  const saveSetting = async (key: string, value: any) => {
+    if (!user?.id) return
+    
+    try {
+      const settingId = `setting_${user.id}_${key}`
+      await blink.db.userSettings.upsert({
+        id: settingId,
+        user_id: user.id,
+        setting_key: key,
+        setting_value: String(value)
+      })
+      
+      setSettings(prev => ({ ...prev, [key]: value }))
+    } catch (error) {
+      console.error('Error saving setting:', error)
+    }
+  }
 
   const loadTasks = useCallback(async () => {
     if (!user?.id) return
@@ -56,18 +168,100 @@ function App() {
     }
   }, [user?.id, selectedDate])
 
-  // Load tasks when user is authenticated or date changes
+  const loadAdditionalTasks = useCallback(async () => {
+    if (!user?.id) return
+    
+    try {
+      const dateStr = selectedDate.toISOString().split('T')[0]
+      
+      const additionalTasksData = await blink.db.additionalTasks.list({
+        where: { 
+          user_id: user.id,
+          date: dateStr
+        },
+        orderBy: { created_at: 'desc' }
+      })
+      
+      setAdditionalTasks(additionalTasksData || [])
+    } catch (error) {
+      console.error('Error loading additional tasks:', error)
+      setAdditionalTasks([])
+    }
+  }, [user?.id, selectedDate])
+
+  const calculateStreak = (completedTasks: Task[]) => {
+    if (completedTasks.length === 0) {
+      setCurrentStreak(0)
+      return
+    }
+    
+    // Group tasks by date
+    const tasksByDate = completedTasks.reduce((acc, task) => {
+      const date = task.date
+      if (!acc[date]) acc[date] = []
+      acc[date].push(task)
+      return acc
+    }, {} as Record<string, Task[]>)
+    
+    // Calculate consecutive days
+    let streak = 0
+    const today = new Date()
+    
+    for (let i = 0; i < 365; i++) {
+      const checkDate = new Date(today)
+      checkDate.setDate(today.getDate() - i)
+      const dateStr = checkDate.toISOString().split('T')[0]
+      
+      if (tasksByDate[dateStr] && tasksByDate[dateStr].length > 0) {
+        streak++
+      } else {
+        break
+      }
+    }
+    
+    setCurrentStreak(streak)
+  }
+
+  const loadCompletedTasksHistory = useCallback(async () => {
+    if (!user?.id) return
+    
+    try {
+      const thirtyDaysAgo = new Date()
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
+      
+      const historyData = await blink.db.tasks.list({
+        where: { 
+          user_id: user.id,
+          completed: "1"
+        },
+        orderBy: { date: 'desc' },
+        limit: 100
+      })
+      
+      setCompletedTasksHistory(historyData || [])
+      
+      // Calculate streak
+      calculateStreak(historyData || [])
+    } catch (error) {
+      console.error('Error loading task history:', error)
+    }
+  }, [user?.id])
+
+  // Load data when user is authenticated or date changes
   useEffect(() => {
     if (user?.id) {
+      loadUserSettings()
       loadTasks()
+      loadAdditionalTasks()
+      loadCompletedTasksHistory()
     }
-  }, [user?.id, loadTasks])
+  }, [user?.id, loadUserSettings, loadTasks, loadAdditionalTasks, loadCompletedTasksHistory])
 
   const addTask = async () => {
     if (!user?.id || !newTaskTitle.trim() || isCreatingTask) return
     
-    if (tasks.length >= 5) {
-      toast.error('You can only have 5 tasks per day!')
+    if (tasks.length >= settings.dailyTaskLimit) {
+      toast.error(`You can only have ${settings.dailyTaskLimit} tasks per day!`)
       return
     }
     
@@ -80,12 +274,14 @@ function App() {
         title: newTaskTitle.trim(),
         priority: tasks.length + 1,
         completed: false,
-        date: selectedDate.toISOString().split('T')[0]
+        date: selectedDate.toISOString().split('T')[0],
+        category: 'general',
+        estimated_minutes: 30,
+        energy_level: 'medium'
       }
       
       await blink.db.tasks.create(newTask)
       
-      // Update local state
       setTasks(prev => [...prev, newTask])
       setNewTaskTitle('')
       toast.success('Task added! 🎯')
@@ -98,6 +294,30 @@ function App() {
     }
   }
 
+  const addAdditionalTask = async () => {
+    if (!user?.id || !newAdditionalTaskTitle.trim()) return
+    
+    try {
+      const newTask = {
+        id: `additional_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        user_id: user.id,
+        title: newAdditionalTaskTitle.trim(),
+        completed: false,
+        date: selectedDate.toISOString().split('T')[0]
+      }
+      
+      await blink.db.additionalTasks.create(newTask)
+      
+      setAdditionalTasks(prev => [newTask, ...prev])
+      setNewAdditionalTaskTitle('')
+      toast.success('Additional task added! ✨')
+      
+    } catch (error) {
+      console.error('Error adding additional task:', error)
+      toast.error('Failed to add additional task.')
+    }
+  }
+
   const toggleTask = async (taskId: string) => {
     try {
       const task = tasks.find(t => t.id === taskId)
@@ -105,7 +325,6 @@ function App() {
       
       const isCompleting = !task.completed
       
-      // Update local state immediately
       setTasks(prev => prev.map(t => 
         t.id === taskId ? { ...t, completed: isCompleting } : t
       ))
@@ -116,12 +335,39 @@ function App() {
       
       if (isCompleting) {
         toast.success('Task completed! 🎉')
+        loadCompletedTasksHistory() // Refresh streak
       }
       
     } catch (error) {
       console.error('Error toggling task:', error)
       toast.error('Failed to update task')
-      loadTasks() // Reload on error
+      loadTasks()
+    }
+  }
+
+  const toggleAdditionalTask = async (taskId: string) => {
+    try {
+      const task = additionalTasks.find(t => t.id === taskId)
+      if (!task) return
+      
+      const isCompleting = !task.completed
+      
+      setAdditionalTasks(prev => prev.map(t => 
+        t.id === taskId ? { ...t, completed: isCompleting } : t
+      ))
+      
+      await blink.db.additionalTasks.update(taskId, { 
+        completed: isCompleting
+      })
+      
+      if (isCompleting) {
+        toast.success('Additional task completed! ✨')
+      }
+      
+    } catch (error) {
+      console.error('Error toggling additional task:', error)
+      toast.error('Failed to update additional task')
+      loadAdditionalTasks()
     }
   }
 
@@ -137,7 +383,6 @@ function App() {
       const [movedTask] = newTasks.splice(taskIndex, 1)
       newTasks.splice(newIndex, 0, movedTask)
       
-      // Update priorities
       const updatedTasks = newTasks.map((task, index) => ({
         ...task,
         priority: index + 1
@@ -145,7 +390,6 @@ function App() {
       
       setTasks(updatedTasks)
       
-      // Update database
       for (const task of updatedTasks) {
         await blink.db.tasks.update(task.id, { priority: task.priority })
       }
@@ -155,16 +399,69 @@ function App() {
     } catch (error) {
       console.error('Error updating priority:', error)
       toast.error('Failed to update priority')
-      loadTasks() // Reload on error
+      loadTasks()
     }
   }
 
   const handleDateSelect = (date: Date | undefined) => {
     if (date) {
       setSelectedDate(date)
-      setActiveTab('tasks') // Switch back to tasks when date is selected
+      setActiveTab('tasks')
     }
   }
+
+  const handleOnboardingComplete = async (data: any) => {
+    setShowOnboarding(false)
+    
+    // Save onboarding data as settings
+    await saveSetting('showOnboarding', false)
+    await saveSetting('dailyTaskLimit', data.dailyCapacity)
+    
+    // Create initial tasks from priorities
+    if (data.priorities && data.priorities.length > 0) {
+      for (let i = 0; i < Math.min(data.priorities.length, data.dailyCapacity); i++) {
+        const priority = data.priorities[i]
+        if (priority && priority.trim()) {
+          const newTask = {
+            id: `task_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+            user_id: user.id,
+            title: priority.trim(),
+            priority: i + 1,
+            completed: false,
+            date: new Date().toISOString().split('T')[0],
+            category: 'priority',
+            estimated_minutes: 45,
+            energy_level: 'high'
+          }
+          
+          try {
+            await blink.db.tasks.create(newTask)
+          } catch (error) {
+            console.error('Error creating initial task:', error)
+          }
+        }
+      }
+      
+      // Reload tasks
+      loadTasks()
+    }
+    
+    toast.success(`Welcome to No Noise, ${data.name}! 🎉`)
+  }
+
+  const handleOnboardingSkip = async () => {
+    setShowOnboarding(false)
+    await saveSetting('showOnboarding', false)
+  }
+
+  // Apply dark mode
+  useEffect(() => {
+    if (settings.darkMode) {
+      document.documentElement.classList.add('dark')
+    } else {
+      document.documentElement.classList.remove('dark')
+    }
+  }, [settings.darkMode])
 
   if (loading) {
     return (
@@ -206,15 +503,38 @@ function App() {
 
   const completedCount = tasks.filter(task => Number(task.completed) > 0).length
   const progressPercentage = tasks.length > 0 ? (completedCount / tasks.length) * 100 : 0
+  const completedAdditionalCount = additionalTasks.filter(task => Number(task.completed) > 0).length
+  const completedTasksThisWeek = completedTasksHistory.filter(task => {
+    const taskDate = new Date(task.date)
+    const weekAgo = new Date()
+    weekAgo.setDate(weekAgo.getDate() - 7)
+    return taskDate >= weekAgo
+  }).length
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-4xl">
+      {/* Onboarding */}
+      <AnimatePresence>
+        {showOnboarding && (
+          <OnboardingWizard
+            onComplete={handleOnboardingComplete}
+            onSkip={handleOnboardingSkip}
+          />
+        )}
+      </AnimatePresence>
+
+      <div className="container mx-auto px-4 py-8 max-w-6xl">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="flex items-center justify-center gap-3 mb-4">
             <Sparkles className="h-8 w-8 text-primary" />
             <h1 className="text-3xl font-bold text-foreground">No Noise</h1>
+            {currentStreak > 0 && (
+              <Badge className="bg-orange-500 text-white">
+                <Flame className="h-3 w-3 mr-1" />
+                {currentStreak} day streak
+              </Badge>
+            )}
           </div>
           <p className="text-lg text-muted-foreground mb-4">
             Cut through the noise. Focus on what truly matters.
@@ -229,20 +549,32 @@ function App() {
           </p>
         </div>
 
-        {/* Tabs Navigation */}
+        {/* Main Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="tasks" className="flex items-center gap-2">
               <Target className="h-4 w-4" />
               Tasks
+            </TabsTrigger>
+            <TabsTrigger value="priorities" className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              Priorities
+            </TabsTrigger>
+            <TabsTrigger value="insights" className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              Insights
             </TabsTrigger>
             <TabsTrigger value="calendar" className="flex items-center gap-2">
               <CalendarIcon className="h-4 w-4" />
               Calendar
             </TabsTrigger>
-            <TabsTrigger value="prioritize" className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4" />
-              Prioritize
+            <TabsTrigger value="analytics" className="flex items-center gap-2">
+              <BarChart3 className="h-4 w-4" />
+              Analytics
+            </TabsTrigger>
+            <TabsTrigger value="settings" className="flex items-center gap-2">
+              <Settings className="h-4 w-4" />
+              Settings
             </TabsTrigger>
           </TabsList>
 
@@ -257,14 +589,9 @@ function App() {
                     {completedCount} of {tasks.length} completed
                   </span>
                 </div>
-                <div className="w-full bg-secondary rounded-full h-3">
-                  <div 
-                    className="bg-primary h-3 rounded-full transition-all duration-300" 
-                    style={{ width: `${progressPercentage}%` }}
-                  />
-                </div>
-                <div className="flex items-center justify-between text-xs text-muted-foreground mt-2">
-                  <span>Goal: 5 tasks</span>
+                <Progress value={progressPercentage} className="h-3 mb-2" />
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Goal: {settings.dailyTaskLimit} tasks</span>
                   <span>{Math.round(progressPercentage)}% complete</span>
                 </div>
               </CardContent>
@@ -279,12 +606,12 @@ function App() {
                     value={newTaskTitle}
                     onChange={(e) => setNewTaskTitle(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && addTask()}
-                    disabled={tasks.length >= 5 || isCreatingTask}
+                    disabled={tasks.length >= settings.dailyTaskLimit || isCreatingTask}
                     className="flex-1"
                   />
                   <Button 
                     onClick={addTask} 
-                    disabled={tasks.length >= 5 || !newTaskTitle.trim() || isCreatingTask}
+                    disabled={tasks.length >= settings.dailyTaskLimit || !newTaskTitle.trim() || isCreatingTask}
                   >
                     {isCreatingTask ? (
                       <Sparkles className="h-4 w-4 animate-pulse" />
@@ -293,9 +620,9 @@ function App() {
                     )}
                   </Button>
                 </div>
-                {tasks.length >= 5 && (
+                {tasks.length >= settings.dailyTaskLimit && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    You've reached your daily capacity of 5 tasks. Focus on completing these first!
+                    You've reached your daily capacity of {settings.dailyTaskLimit} tasks. Focus on completing these first!
                   </p>
                 )}
               </CardContent>
@@ -329,11 +656,75 @@ function App() {
                       }`}>
                         {task.title}
                       </p>
+                      {task.category && (
+                        <Badge variant="secondary" className="text-xs">
+                          {task.category}
+                        </Badge>
+                      )}
                     </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
+
+            {/* Additional Tasks Section */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg">Additional Tasks Completed</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Track extra tasks you completed beyond your main priorities
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="What else did you accomplish?"
+                    value={newAdditionalTaskTitle}
+                    onChange={(e) => setNewAdditionalTaskTitle(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && addAdditionalTask()}
+                    className="flex-1"
+                  />
+                  <Button 
+                    onClick={addAdditionalTask} 
+                    disabled={!newAdditionalTaskTitle.trim()}
+                    variant="outline"
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                {additionalTasks.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">
+                      Additional completed: {completedAdditionalCount}/{additionalTasks.length}
+                    </p>
+                    {additionalTasks.map((task) => (
+                      <div key={task.id} className="flex items-center gap-3 p-2 rounded border">
+                        <button
+                          onClick={() => toggleAdditionalTask(task.id)}
+                          className="flex-shrink-0"
+                        >
+                          <CheckCircle2 
+                            className={`h-4 w-4 ${
+                              Number(task.completed) > 0
+                                ? 'text-green-500 fill-green-500' 
+                                : 'text-muted-foreground hover:text-green-500'
+                            }`} 
+                          />
+                        </button>
+                        <p className={`flex-1 text-sm ${
+                          Number(task.completed) > 0
+                            ? 'line-through text-muted-foreground' 
+                            : 'text-foreground'
+                        }`}>
+                          {task.title}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
 
             {tasks.length === 0 && (
               <Card>
@@ -348,33 +739,13 @@ function App() {
             )}
           </TabsContent>
 
-          {/* Calendar Tab */}
-          <TabsContent value="calendar" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Select a Date</CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Click on any date to view and manage tasks for that day
-                </p>
-              </CardHeader>
-              <CardContent>
-                <Calendar
-                  mode="single"
-                  selected={selectedDate}
-                  onSelect={handleDateSelect}
-                  className="rounded-md border w-full"
-                />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* Prioritization Tab */}
-          <TabsContent value="prioritize" className="space-y-6">
+          {/* Priorities Tab */}
+          <TabsContent value="priorities" className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle>Prioritize Your Tasks</CardTitle>
                 <p className="text-sm text-muted-foreground">
-                  Drag tasks up or down to reorder them by priority
+                  Use the arrows to reorder tasks by priority
                 </p>
               </CardHeader>
               <CardContent>
@@ -428,17 +799,160 @@ function App() {
               </CardContent>
             </Card>
           </TabsContent>
-        </Tabs>
 
-        {/* Sign Out */}
-        <div className="mt-8 text-center">
-          <Button 
-            variant="outline" 
-            onClick={() => blink.auth.logout()}
-          >
-            Sign Out
-          </Button>
-        </div>
+          {/* Insights Tab */}
+          <TabsContent value="insights" className="space-y-6">
+            <AIInsights 
+              tasks={tasks}
+              completedTasksHistory={completedTasksHistory}
+              currentStreak={currentStreak}
+            />
+          </TabsContent>
+
+          {/* Calendar Tab */}
+          <TabsContent value="calendar" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Select a Date</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Click on any date to view and manage tasks for that day
+                </p>
+              </CardHeader>
+              <CardContent>
+                <Calendar
+                  mode="single"
+                  selected={selectedDate}
+                  onSelect={handleDateSelect}
+                  className="rounded-md border w-full"
+                />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Analytics Tab */}
+          <TabsContent value="analytics" className="space-y-6">
+            <div className="grid md:grid-cols-2 gap-6">
+              <Gamification 
+                user={user}
+                currentStreak={currentStreak}
+                completedTasksThisWeek={completedTasksThisWeek}
+                totalTasksThisWeek={35}
+              />
+              <Sharing 
+                user={user}
+                tasks={tasks}
+                currentStreak={currentStreak}
+              />
+            </div>
+          </TabsContent>
+
+          {/* Settings Tab */}
+          <TabsContent value="settings" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>App Settings</CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Customize your No Noise experience
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Dark Mode */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-2">
+                      {settings.darkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+                      <span className="font-medium">Dark Mode</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Switch between light and dark themes
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.darkMode}
+                    onCheckedChange={(checked) => saveSetting('darkMode', checked)}
+                  />
+                </div>
+
+                {/* Daily Task Limit */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <span className="font-medium">Daily Task Limit</span>
+                      <p className="text-sm text-muted-foreground">
+                        Maximum number of daily priorities
+                      </p>
+                    </div>
+                    <Badge variant="secondary">{settings.dailyTaskLimit}</Badge>
+                  </div>
+                  <Slider
+                    value={[settings.dailyTaskLimit]}
+                    onValueChange={([value]) => saveSetting('dailyTaskLimit', value)}
+                    max={10}
+                    min={1}
+                    step={1}
+                    className="w-full"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>1 task</span>
+                    <span>10 tasks</span>
+                  </div>
+                </div>
+
+                {/* Notifications */}
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <span className="font-medium">Notifications</span>
+                    <p className="text-sm text-muted-foreground">
+                      Get reminders and achievement notifications
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.notifications}
+                    onCheckedChange={(checked) => saveSetting('notifications', checked)}
+                  />
+                </div>
+
+                {/* Reset Onboarding */}
+                <div className="pt-4 border-t">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowOnboarding(true)}
+                    className="w-full"
+                  >
+                    <Users className="h-4 w-4 mr-2" />
+                    Restart Onboarding
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Account */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Account</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">{user.email}</p>
+                      <p className="text-sm text-muted-foreground">
+                        Member since {new Date(user.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    onClick={() => blink.auth.logout()}
+                    className="w-full"
+                  >
+                    Sign Out
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   )
