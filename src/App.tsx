@@ -74,7 +74,7 @@ function App() {
         date: new Date().toISOString().split('T')[0]
       }
       
-      const createdTask = await blink.db.tasks.create(newTask)
+      await blink.db.tasks.create(newTask)
       
       // Reload tasks to get the latest data
       await loadTasks()
@@ -82,7 +82,7 @@ function App() {
       toast.success('Task added! 🎯')
     } catch (error) {
       console.error('Error adding task:', error)
-      toast.error('Failed to add task: ' + error.message)
+      toast.error('Failed to add task. Please try again.')
     }
   }
 
@@ -105,7 +105,7 @@ function App() {
       }
     } catch (error) {
       console.error('Error toggling task:', error)
-      toast.error('Failed to update task: ' + error.message)
+      toast.error('Failed to update task. Please try again.')
     }
   }
 
@@ -171,8 +171,6 @@ function App() {
             })}
           </p>
         </div>
-
-
 
         {/* Progress */}
         <Card className="mb-6">

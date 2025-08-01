@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Test</title>
+</head>
+<body>
+    <h1>Debug Test</h1>
+    <button onclick="testTaskCreation()">Test Task Creation</button>
+    <div id="result"></div>
+
+    <script type="module">
+        import { createClient } from '@blinkdotnew/sdk'
+        
+        const blink = createClient({
+            projectId: 'daily-top-5-task-tracker-yu9ovznn',
+            authRequired: true
+        })
+
+        window.testTaskCreation = async function() {
+            const resultDiv = document.getElementById('result')
+            
+            try {
+                // Get user
+                const user = await blink.auth.me()
+                console.log('User:', user)
+                resultDiv.innerHTML += `<p>User ID: ${user.id}</p>`
+                
+                // Try to create a task
+                const testTask = {
+                    id: `test_${Date.now()}`,
+                    userId: user.id,
+                    title: 'Debug Test Task',
+                    priority: 1,
+                    completed: false,
+                    date: new Date().toISOString().split('T')[0]
+                }
+                
+                console.log('Creating task:', testTask)
+                resultDiv.innerHTML += `<p>Creating task...</p>`
+                
+                const result = await blink.db.tasks.create(testTask)
+                console.log('Task created:', result)
+                resultDiv.innerHTML += `<p>✅ Task created successfully!</p>`
+                
+                // Try to list tasks
+                const tasks = await blink.db.tasks.list({
+                    where: { userId: user.id }
+                })
+                console.log('Tasks:', tasks)
+                resultDiv.innerHTML += `<p>Found ${tasks.length} tasks</p>`
+                
+            } catch (error) {
+                console.error('Error:', error)
+                resultDiv.innerHTML += `<p>❌ Error: ${error.message}</p>`
+            }
+        }
+    </script>
+</body>
+</html>
