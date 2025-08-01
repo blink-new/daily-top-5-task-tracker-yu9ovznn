@@ -106,25 +106,45 @@ function App() {
       })
       
       if (settingsData && settingsData.length > 0) {
-        const userSettings = settingsData.reduce((acc, setting) => {
-          acc[setting.setting_key] = setting.setting_value === 'true' ? true : 
-                                   setting.setting_value === 'false' ? false :
-                                   isNaN(Number(setting.setting_value)) ? setting.setting_value : Number(setting.setting_value)
-          return acc
-        }, {} as any)
+        const userSettingsRecord = settingsData[0]
         
-        setSettings(prev => ({ ...prev, ...userSettings }))
-        
-        // Check if should show onboarding
-        if (userSettings.showOnboarding !== false) {
-          setShowOnboarding(true)
-        }
+        setSettings(prev => ({
+          ...prev,
+          darkMode: Number(userSettingsRecord.dark_mode) > 0,
+          dailyTaskLimit: userSettingsRecord.daily_goal || 5,
+          showOnboarding: false, // If record exists, onboarding was completed
+          notifications: Number(userSettingsRecord.sound_enabled) > 0
+        }))
       } else {
-        // First time user - show onboarding
+        // First time user - show onboarding and create default settings
         setShowOnboarding(true)
+        
+        // Create default settings record
+        const defaultSettings = {
+          id: `settings_${user.id}`,
+          user_id: user.id,
+          dark_mode: 0,
+          sound_enabled: 1,
+          daily_goal: 5,
+          sound_effects: 1,
+          adaptive_capacity: 0,
+          weekly_reflection: '',
+          reset_time: '00:00',
+          timezone: 'UTC'
+        }
+        
+        await blink.db.userSettings.create(defaultSettings)
       }
     } catch (error) {
       console.error('Error loading settings:', error)
+      // Don't show onboarding if there's an error - use defaults
+      setSettings(prev => ({
+        ...prev,
+        darkMode: false,
+        dailyTaskLimit: 5,
+        showOnboarding: false,
+        notifications: true
+      }))
     }
   }, [user?.id])
 
@@ -133,17 +153,54 @@ function App() {
     if (!user?.id) return
     
     try {
-      const settingId = `setting_${user.id}_${key}`
-      await blink.db.userSettings.upsert({
-        id: settingId,
-        user_id: user.id,
-        setting_key: key,
-        setting_value: String(value)
-      })
+      const settingsId = `settings_${user.id}`
+      
+      // Map our setting keys to database columns
+      const updateData: any = {}
+      
+      switch (key) {
+        case 'darkMode':
+          updateData.dark_mode = value ? 1 : 0
+          break
+        case 'dailyTaskLimit':
+          updateData.daily_goal = Number(value)
+          break
+        case 'notifications':
+          updateData.sound_enabled = value ? 1 : 0
+          break
+        case 'showOnboarding':
+          // This doesn't need to be saved to DB - it's implicit
+          break
+        default:
+          console.warn(`Unknown setting key: ${key}`)
+          return
+      }
+      
+      if (Object.keys(updateData).length > 0) {
+        await blink.db.userSettings.update(settingsId, updateData)
+      }
       
       setSettings(prev => ({ ...prev, [key]: value }))
     } catch (error) {
       console.error('Error saving setting:', error)
+      toast.error('Failed to save setting')
+    }
+  }
+
+  // Helper function for retry logic
+  const retryWithBackoff = async (fn: () => Promise<any>, maxRetries = 3, baseDelay = 1000) => {
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn()
+      } catch (error: any) {
+        if (error?.status === 429 && i < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, i) + Math.random() * 1000
+          console.log(`Rate limited, retrying in ${delay}ms...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        throw error
+      }
     }
   }
 
@@ -153,13 +210,15 @@ function App() {
     try {
       const dateStr = selectedDate.toISOString().split('T')[0]
       
-      const tasksData = await blink.db.tasks.list({
-        where: { 
-          user_id: user.id,
-          date: dateStr
-        },
-        orderBy: { priority: 'asc' }
-      })
+      const tasksData = await retryWithBackoff(() => 
+        blink.db.tasks.list({
+          where: { 
+            user_id: user.id,
+            date: dateStr
+          },
+          orderBy: { priority: 'asc' }
+        })
+      )
       
       setTasks(tasksData || [])
     } catch (error) {
@@ -174,13 +233,15 @@ function App() {
     try {
       const dateStr = selectedDate.toISOString().split('T')[0]
       
-      const additionalTasksData = await blink.db.additionalTasks.list({
-        where: { 
-          user_id: user.id,
-          date: dateStr
-        },
-        orderBy: { created_at: 'desc' }
-      })
+      const additionalTasksData = await retryWithBackoff(() =>
+        blink.db.additionalTasks.list({
+          where: { 
+            user_id: user.id,
+            date: dateStr
+          },
+          orderBy: { created_at: 'desc' }
+        })
+      )
       
       setAdditionalTasks(additionalTasksData || [])
     } catch (error) {
@@ -226,17 +287,16 @@ function App() {
     if (!user?.id) return
     
     try {
-      const thirtyDaysAgo = new Date()
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
-      
-      const historyData = await blink.db.tasks.list({
-        where: { 
-          user_id: user.id,
-          completed: "1"
-        },
-        orderBy: { date: 'desc' },
-        limit: 100
-      })
+      const historyData = await retryWithBackoff(() =>
+        blink.db.tasks.list({
+          where: { 
+            user_id: user.id,
+            completed: "1"
+          },
+          orderBy: { date: 'desc' },
+          limit: 100
+        })
+      )
       
       setCompletedTasksHistory(historyData || [])
       
@@ -244,18 +304,32 @@ function App() {
       calculateStreak(historyData || [])
     } catch (error) {
       console.error('Error loading task history:', error)
+      setCompletedTasksHistory([])
+      setCurrentStreak(0)
     }
   }, [user?.id])
 
   // Load data when user is authenticated or date changes
   useEffect(() => {
     if (user?.id) {
-      loadUserSettings()
-      loadTasks()
-      loadAdditionalTasks()
-      loadCompletedTasksHistory()
+      // Load settings first, then other data with delays to avoid rate limiting
+      const loadAllData = async () => {
+        await loadUserSettings()
+        
+        // Add small delays between requests to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await loadTasks()
+        
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await loadAdditionalTasks()
+        
+        await new Promise(resolve => setTimeout(resolve, 200))
+        await loadCompletedTasksHistory()
+      }
+      
+      loadAllData()
     }
-  }, [user?.id, loadUserSettings, loadTasks, loadAdditionalTasks, loadCompletedTasksHistory])
+  }, [user?.id, selectedDate, loadUserSettings, loadTasks, loadAdditionalTasks, loadCompletedTasksHistory])
 
   const addTask = async () => {
     if (!user?.id || !newTaskTitle.trim() || isCreatingTask) return
@@ -414,7 +488,6 @@ function App() {
     setShowOnboarding(false)
     
     // Save onboarding data as settings
-    await saveSetting('showOnboarding', false)
     await saveSetting('dailyTaskLimit', data.dailyCapacity)
     
     // Create initial tasks from priorities
@@ -436,14 +509,16 @@ function App() {
           
           try {
             await blink.db.tasks.create(newTask)
+            // Add delay between task creation to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100))
           } catch (error) {
             console.error('Error creating initial task:', error)
           }
         }
       }
       
-      // Reload tasks
-      loadTasks()
+      // Reload tasks after a short delay
+      setTimeout(() => loadTasks(), 500)
     }
     
     toast.success(`Welcome to No Noise, ${data.name}! 🎉`)
@@ -451,7 +526,7 @@ function App() {
 
   const handleOnboardingSkip = async () => {
     setShowOnboarding(false)
-    await saveSetting('showOnboarding', false)
+    // No need to save showOnboarding setting - it's implicit when settings record exists
   }
 
   // Apply dark mode
