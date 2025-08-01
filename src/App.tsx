@@ -20,6 +20,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [tasks, setTasks] = useState<Task[]>([])
   const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [isCreatingTask, setIsCreatingTask] = useState(false)
 
   // Auth state management
   useEffect(() => {
@@ -57,16 +58,18 @@ function App() {
   }, [user?.id, loadTasks])
 
   const addTask = async () => {
-    if (!user?.id || !newTaskTitle.trim()) return
+    if (!user?.id || !newTaskTitle.trim() || isCreatingTask) return
     
     if (tasks.length >= 5) {
       toast.error('You can only have 5 tasks per day!')
       return
     }
     
+    setIsCreatingTask(true)
+    
     try {
       const newTask = {
-        id: `task_${Date.now()}`,
+        id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         userId: user.id,
         title: newTaskTitle.trim(),
         priority: tasks.length + 1,
@@ -74,15 +77,24 @@ function App() {
         date: new Date().toISOString().split('T')[0]
       }
       
-      await blink.db.tasks.create(newTask)
+      console.log('Creating task:', newTask)
       
-      // Reload tasks to get the latest data
-      await loadTasks()
+      const createdTask = await blink.db.tasks.create(newTask)
+      console.log('Task created successfully:', createdTask)
+      
+      // Update local state immediately for better UX
+      setTasks(prev => [...prev, newTask])
       setNewTaskTitle('')
       toast.success('Task added! 🎯')
+      
+      // Reload tasks to ensure consistency
+      setTimeout(() => loadTasks(), 500)
+      
     } catch (error) {
       console.error('Error adding task:', error)
       toast.error('Failed to add task. Please try again.')
+    } finally {
+      setIsCreatingTask(false)
     }
   }
 
@@ -93,19 +105,27 @@ function App() {
       
       const isCompleting = !task.completed
       
+      // Update local state immediately for better UX
+      setTasks(prev => prev.map(t => 
+        t.id === taskId ? { ...t, completed: isCompleting } : t
+      ))
+      
       await blink.db.tasks.update(taskId, { 
         completed: isCompleting
       })
       
-      // Reload tasks to get the latest data
-      await loadTasks()
-      
       if (isCompleting) {
         toast.success('Task completed! 🎉')
       }
+      
+      // Reload tasks to ensure consistency
+      setTimeout(() => loadTasks(), 500)
+      
     } catch (error) {
       console.error('Error toggling task:', error)
       toast.error('Failed to update task. Please try again.')
+      // Revert local state on error
+      loadTasks()
     }
   }
 
@@ -203,14 +223,18 @@ function App() {
                 value={newTaskTitle}
                 onChange={(e) => setNewTaskTitle(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && addTask()}
-                disabled={tasks.length >= 5}
+                disabled={tasks.length >= 5 || isCreatingTask}
                 className="flex-1"
               />
               <Button 
                 onClick={addTask} 
-                disabled={tasks.length >= 5 || !newTaskTitle.trim()}
+                disabled={tasks.length >= 5 || !newTaskTitle.trim() || isCreatingTask}
               >
-                <Plus className="h-4 w-4" />
+                {isCreatingTask ? (
+                  <Sparkles className="h-4 w-4 animate-pulse" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
               </Button>
             </div>
             {tasks.length >= 5 && (
