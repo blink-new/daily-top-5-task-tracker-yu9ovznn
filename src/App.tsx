@@ -12,7 +12,7 @@ interface Task {
   priority: number
   completed: boolean
   date: string
-  userId: string
+  user_id: string // Using snake_case to match database
 }
 
 function App() {
@@ -25,6 +25,7 @@ function App() {
   // Auth state management
   useEffect(() => {
     const unsubscribe = blink.auth.onAuthStateChanged((state) => {
+      console.log('Auth state changed:', state)
       setUser(state.user)
       setLoading(state.isLoading)
     })
@@ -32,17 +33,25 @@ function App() {
   }, [])
 
   const loadTasks = useCallback(async () => {
-    if (!user?.id) return
+    if (!user?.id) {
+      console.log('No user ID, skipping task load')
+      return
+    }
     
     try {
+      console.log('Loading tasks for user:', user.id)
       const today = new Date().toISOString().split('T')[0]
+      
+      // Use snake_case field names to match database
       const tasksData = await blink.db.tasks.list({
         where: { 
-          userId: user.id,
+          user_id: user.id,  // snake_case
           date: today
         },
         orderBy: { priority: 'asc' }
       })
+      
+      console.log('Tasks loaded:', tasksData)
       setTasks(tasksData || [])
     } catch (error) {
       console.error('Error loading tasks:', error)
@@ -53,12 +62,16 @@ function App() {
   // Load tasks when user is authenticated
   useEffect(() => {
     if (user?.id) {
+      console.log('User authenticated, loading tasks')
       loadTasks()
     }
   }, [user?.id, loadTasks])
 
   const addTask = async () => {
-    if (!user?.id || !newTaskTitle.trim() || isCreatingTask) return
+    if (!user?.id || !newTaskTitle.trim() || isCreatingTask) {
+      console.log('Cannot add task:', { userId: user?.id, title: newTaskTitle.trim(), isCreating: isCreatingTask })
+      return
+    }
     
     if (tasks.length >= 5) {
       toast.error('You can only have 5 tasks per day!')
@@ -70,14 +83,14 @@ function App() {
     try {
       const newTask = {
         id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        userId: user.id,
+        user_id: user.id,  // Use snake_case to match database
         title: newTaskTitle.trim(),
         priority: tasks.length + 1,
         completed: false,
         date: new Date().toISOString().split('T')[0]
       }
       
-      console.log('Creating task:', newTask)
+      console.log('Creating task with data:', newTask)
       
       const createdTask = await blink.db.tasks.create(newTask)
       console.log('Task created successfully:', createdTask)
@@ -92,7 +105,11 @@ function App() {
       
     } catch (error) {
       console.error('Error adding task:', error)
+      console.error('Error details:', JSON.stringify(error, null, 2))
       toast.error('Failed to add task. Please try again.')
+      
+      // Remove the optimistic update on error
+      setTasks(prev => prev.filter(t => t.id !== newTask.id))
     } finally {
       setIsCreatingTask(false)
     }
@@ -104,6 +121,7 @@ function App() {
       if (!task) return
       
       const isCompleting = !task.completed
+      console.log('Toggling task:', taskId, 'to completed:', isCompleting)
       
       // Update local state immediately for better UX
       setTasks(prev => prev.map(t => 
@@ -113,6 +131,8 @@ function App() {
       await blink.db.tasks.update(taskId, { 
         completed: isCompleting
       })
+      
+      console.log('Task toggled successfully')
       
       if (isCompleting) {
         toast.success('Task completed! 🎉')
